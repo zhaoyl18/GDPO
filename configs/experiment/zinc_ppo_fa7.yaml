@@ -2,7 +2,7 @@
 general:
     name : 'zinc'
     gpus : 1
-    wandb: 'disabled'
+    wandb: 'online'
     resume: null       # If resume, path to ckpt file from outputs directory in main directory
     test_only: null
     check_val_every_n_epochs: 1

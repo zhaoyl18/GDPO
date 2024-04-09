@@ -17,8 +17,8 @@ visualize/
 outputs/
 *.ckpt
 .history/
-*.gz
-*.pt
+# *.gz
+# *.pt
 *.csv
 *.txt
 *.npz
@@ -143,6 +143,7 @@ celerybeat.pid
 
 # SageMath parsed files
 *.sage.py
+.vscode/
 
 # Environments
 .env

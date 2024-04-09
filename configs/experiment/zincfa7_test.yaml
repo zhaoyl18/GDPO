@@ -2,9 +2,10 @@
 general:
     name : 'zinc'
     gpus : 1
-    wandb: 'disabled'
+    wandb: 'online'
     resume: null       # If resume, path to ckpt file from outputs directory in main directory
-    test_only: null
+    test_only: '/data/yulai/projects/GDPO/finetuned_ckpt/zincfa70505.pt'
+    # test_only: '/data/yulai/projects/GDPO/pretrained/zincpretrained.pt'
     check_val_every_n_epochs: 1
     sample_every_val: 1
     samples_to_generate: 40

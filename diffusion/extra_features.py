@@ -42,16 +42,16 @@ class DummyExtraFeatures:
 
 class ExtraFeatures:
     def __init__(self, extra_features_type, dataset_info,ex_data=False):
-        self.max_n_nodes = dataset_info.max_n_nodes
+        self.max_n_nodes = dataset_info.max_n_nodes   # 38
         self.ncycles = NodeCycleFeatures()
-        self.features_type = extra_features_type
+        self.features_type = extra_features_type   # all
         if extra_features_type in ['eigenvalues', 'all']:
             self.eigenfeatures = EigenFeatures(mode=extra_features_type)
 
     def __call__(self, noisy_data):
         n = noisy_data['node_mask'].sum(dim=1).unsqueeze(1) / self.max_n_nodes
         x_cycles, y_cycles = self.ncycles(noisy_data)       # (bs, n_cycles)
-
+        # torch.Size([256, 36, 3]), torch.Size([256, 4])
         if self.features_type == 'cycles':
             E = noisy_data['E_t']
             extra_edge_attr = torch.zeros((*E.shape[:-1], 0)).type_as(E)
@@ -66,8 +66,8 @@ class ExtraFeatures:
                                                                                     batched_eigenvalues)))
         elif self.features_type == 'all':
             eigenfeatures = self.eigenfeatures(noisy_data)
-            E = noisy_data['E_t']
-            extra_edge_attr = torch.zeros((*E.shape[:-1], 0)).type_as(E)
+            E = noisy_data['E_t']  # [256, 36, 36, 5]
+            extra_edge_attr = torch.zeros((*E.shape[:-1], 0)).type_as(E) # torch.Size([256, 36, 36, 0])
             n_components, batched_eigenvalues, nonlcc_indicator, k_lowest_eigvec = eigenfeatures   # (bs, 1), (bs, 10),
                                                                                                 # (bs, n, 1), (bs, n, 2)
 

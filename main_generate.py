@@ -6,6 +6,8 @@ except ModuleNotFoundError:
     pass
 
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '3'
+
 import pathlib
 import warnings
 import numpy as np
@@ -35,6 +37,7 @@ from diffusion.extra_features_molecular import ExtraMolecularFeatures
 from dataset.ppo_dataset import PPODataModule
 
 warnings.filterwarnings("ignore", category=PossibleUserWarning)
+warnings.filterwarnings("ignore", message=".*low exhaustiveness.*")
 # batch_size = 128
 
 def init(cfg):
@@ -190,7 +193,7 @@ def main(cfg: DictConfig):
 
         dataset_infos.compute_input_output_dims(datamodule=datamodule, extra_features=extra_features,
                                                 domain_features=domain_features)
-
+        # input_dims: {'X': 17, 'E': 5, 'y': 13}, output_dims: {'X': 9, 'E': 5, 'y': 0}
         if cfg.model.type == 'discrete':
             train_metrics = TrainMolecularMetricsDiscrete(dataset_infos)
         else:
@@ -204,9 +207,10 @@ def main(cfg: DictConfig):
                         'sampling_metrics': sampling_metrics, 'visualization_tools': visualization_tools,
                         'extra_features': extra_features, 'domain_features': domain_features}
     if cfg.general.test_only:
-        # When testing, previous configuration is fully loaded
-        cfg, _ = get_resume(cfg, model_kwargs)
-        os.chdir(cfg.general.test_only.split('checkpoints')[0])
+        # # When testing, previous configuration is fully loaded
+        # cfg, _ = get_resume(cfg, model_kwargs)
+        # os.chdir(cfg.general.test_only.split('checkpoints')[0])
+        pass
     elif cfg.general.resume:
         # When resuming, we can override some parts of previous configuration
         cfg, _ = get_resume_adaptive(cfg, model_kwargs)
@@ -284,7 +288,7 @@ def main(cfg: DictConfig):
                       check_val_every_n_epoch=cfg.general.check_val_every_n_epochs,
                       fast_dev_run=cfg.general.name == 'debug',
                       strategy='ddp' if cfg.general.gpus > 1 else None,
-                      enable_progress_bar=False,
+                      enable_progress_bar=True,
                       callbacks=callbacks,
                       logger=[])
 
@@ -345,13 +349,17 @@ def main(cfg: DictConfig):
             if cfg.dataset.name in ["zinc","moses"]:
                 model.train_smiles = train_smiles
         init(cfg)
+        
+        # Start training
         trainer.fit(model, datamodule=datamodule)
+        
+        
         if cfg.general.name not in ['debug', 'test']:
             trainer.test(model, datamodule=datamodule)
     else:
         # Start by evaluating test_only_path
-        # cfg.general.test_method="evalproperty"
-        cfg.general.test_method = "evalgeneral"
+        cfg.general.test_method="evalproperty"
+        # cfg.general.test_method = "evalgeneral"
         if cfg.model.type == 'discrete':
             model = DiscreteDenoisingDiffusion(cfg=cfg, **model_kwargs)
         else:
@@ -359,9 +367,20 @@ def main(cfg: DictConfig):
         if cfg.dataset.name in ["zinc","moses"]:
             model.train_smiles = train_smiles
         model.ckpt = cfg.general.test_only
-        trainer.test(model, datamodule=datamodule,
-                     ckpt_path=cfg.general.test_only)
-        # trainer.test(model, datamodule=datamodule)
+        
+        if cfg.general.test_method == "evalproperty" and cfg.general.test_only:
+            sd = torch.load(cfg.general.test_only)
+            new_sd = {}
+            for k,v in sd.items():
+                if "model" in k:
+                    new_sd[k[6:]]=v
+            model.model.load_state_dict(new_sd)
+            model.model.cuda()
+            print("load fine-tuned model")
+        
+        # trainer.test(model, datamodule=datamodule,
+        #              ckpt_path=cfg.general.test_only)
+        trainer.test(model, datamodule=datamodule)
         cfg.general.evaluate_all_checkpoints=False
         
         if cfg.general.evaluate_all_checkpoints:

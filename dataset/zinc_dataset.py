@@ -78,7 +78,7 @@ class MOSESDataset(InMemoryDataset):
             mol = Chem.MolFromSmiles(smile)
             N = mol.GetNumAtoms()
 
-            type_idx = []
+            type_idx = []  # *(N,) each value is from 0 to 8, representing atom type index
             for atom in mol.GetAtoms():
                 type_idx.append(types[atom.GetSymbol()])
 
@@ -94,7 +94,7 @@ class MOSESDataset(InMemoryDataset):
 
             edge_index = torch.tensor([row, col], dtype=torch.long)
             edge_type = torch.tensor(edge_type, dtype=torch.long)
-            edge_attr = F.one_hot(edge_type, num_classes=len(bonds) + 1).to(torch.float)
+            edge_attr = F.one_hot(edge_type, num_classes=len(bonds) + 1).to(torch.float) # (E,5)
 
             perm = (edge_index[0] * N + edge_index[1]).argsort()
             edge_index = edge_index[:, perm]
@@ -196,11 +196,13 @@ class MOSESinfos(AbstractDatasetInfos):
             if (k not in meta or meta[k] is None) and os.path.exists(v):
                 meta[k] = np.loadtxt(v)
                 setattr(self, k, meta[k])
+                
         if recompute_statistics or self.n_nodes is None:
             self.n_nodes = datamodule.node_counts()
             print("Distribution of number of nodes", self.n_nodes)
             np.savetxt(meta_files["n_nodes"], self.n_nodes.numpy())
             self.max_n_nodes = len(self.n_nodes) - 1
+            
         if recompute_statistics or self.node_types is None:
             self.node_types = datamodule.node_types()                                     # There are no node types
             print("Distribution of node types", self.node_types)
@@ -210,6 +212,7 @@ class MOSESinfos(AbstractDatasetInfos):
             self.edge_types = datamodule.edge_counts()
             print("Distribution of edge types", self.edge_types)
             np.savetxt(meta_files["edge_types"], self.edge_types.numpy())
+            
         if recompute_statistics or self.valency_distribution is None:
             valencies = datamodule.valency_count(self.max_n_nodes)
             print("Distribution of the valencies", valencies)

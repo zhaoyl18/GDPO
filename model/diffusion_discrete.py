@@ -101,20 +101,20 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         self.cfg = cfg
         self.name = cfg.general.name
         self.model_dtype = torch.float32
-        self.T = cfg.model.diffusion_steps
+        self.T = cfg.model.diffusion_steps  # 500
 
-        self.Xdim = input_dims['X']
-        self.Edim = input_dims['E']
-        self.ydim = input_dims['y']
-        self.Xdim_output = output_dims['X']
-        self.Edim_output = output_dims['E']
-        self.ydim_output = output_dims['y']
+        self.Xdim = input_dims['X']  # 17
+        self.Edim = input_dims['E']  # 5
+        self.ydim = input_dims['y']  # 13
+        self.Xdim_output = output_dims['X']  # 9
+        self.Edim_output = output_dims['E']  # 5
+        self.ydim_output = output_dims['y']  # 0
         self.node_dist = nodes_dist
 
         self.dataset_info = dataset_infos
 
         self.train_loss = TrainLossDiscrete(self.cfg.model.lambda_train)
-        self.lambda_train = self.cfg.model.lambda_train
+        self.lambda_train = self.cfg.model.lambda_train  # [5,0]
         self.val_nll = NLL()
         self.val_X_kl = SumExceptBatchKL()
         self.val_E_kl = SumExceptBatchKL()
@@ -131,9 +131,9 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         self.sampling_metrics = sampling_metrics
         
         self.visualization_tools = visualization_tools
-        self.extra_features = extra_features
+        self.extra_features = extra_features # [feature_type='all', max_n_nodes=38]
         self.domain_features = domain_features
-        self.model = GraphTransformer(n_layers=cfg.model.n_layers,
+        self.model = GraphTransformer(n_layers=cfg.model.n_layers,   # 12
                                       input_dims=input_dims,
                                       hidden_mlp_dims=cfg.model.hidden_mlp_dims,
                                       hidden_dims=cfg.model.hidden_dims,
@@ -280,6 +280,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         avgrewards = 0
         all_rewards = []
         gen_start = time.time()
+        
         for _ in range(self.cfg.general.sampleloop):
             X_traj,E_traj,node_mask,rewards,rewardsmean = self.sample_batch_ppo(bs)
             # print(rewards)
@@ -579,6 +580,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         prob_E = prob_E.reshape(bs, n, n, pred_E.shape[-1])
         prob_Z = utils.PlaceHolder(X=prob_X, E=prob_E, y=None).mask(node_mask)
         return prob_Z.X,prob_Z.E
+    
     def ppo_loss(self,masked_pred_X,masked_pred_E,pred_y,true_X,true_E,true_y,reweight):
         #reweight #(bs)
         # print("check loss shape")
@@ -610,6 +612,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         loss_E = loss_E[mask_E]
         
         return loss_X,loss_E
+    
     def nll_loss(self,masked_pred_X,masked_pred_E,pred_y,true_X,true_E,true_y,reweight):
         #reweight #(bs)
         # print("check loss shape")
@@ -675,7 +678,6 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         
         return -loss_X,-loss_E
 
-
     def configure_optimizers(self):
         pg = [p for p in self.parameters() if p.requires_grad]
         return torch.optim.AdamW(pg, lr=self.cfg.train.lr, amsgrad=self.cfg.train.amsgrad,
@@ -727,6 +729,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             pass
             nll=0
         return {'loss': nll}
+    
     @torch.no_grad()
     def ppo_evaluate(self,test=False):
         # samples_left_to_generate = self.cfg.general.final_model_samples_to_generate
@@ -798,8 +801,9 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 to_generate = min(samples_left_to_generate, bs)
                 to_save = min(samples_left_to_save, bs)
                 chains_save = min(chains_left_to_save, bs)
-                samples.extend(self.sample_batch(id, to_generate, num_nodes=None, save_final=to_save,
-                                                keep_chain=chains_save, number_chain_steps=self.number_chain_steps))
+                new_samples = self.sample_batch(id, to_generate, num_nodes=None, save_final=to_save,
+                                                keep_chain=chains_save, number_chain_steps=self.number_chain_steps)
+                samples.extend(new_samples)
                 id += to_generate
                 samples_left_to_save -= to_save
                 samples_left_to_generate -= to_generate
@@ -811,6 +815,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                     self.train_fps = [AllChem.GetMorganFingerprintAsBitVect((mol), 2, 1024) for mol in train_mols]
                 smiles,valid_r,uniq,uniq_r,freq_list = gen_smile_list(samples,self.dataset_info)
                 valid = [x for x in smiles if x is not None]
+                print(f"valid/all percentage: {len(valid)}/{len(smiles)}")
                 if self.cfg.dataset.name == "moses":
                     result = mose_evaluate(self.cfg.general.target_prop,valid,None,self.train_fps)
                 else:
@@ -836,7 +841,8 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                         "hit":result["hit"],
                         "avgds": round(result["avgds"],4),
                         "avgqed": round(result["avgqed"],4),
-                        "avgsa": round(result["avgsa"],4)
+                        "avgsa": round(result["avgsa"],4),
+                        "valid_percentage": round(100*len(valid)/len(smiles),4)
                     }
                     line = json.dumps(write_dict)+"\n"
                     logf.write(line)
@@ -870,7 +876,8 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                         "hit":result["hit"],
                         "avgds": round(result["avgds"],4),
                         "avgqed": round(result["avgqed"],4),
-                        "avgsa": round(result["avgsa"],4)
+                        "avgsa": round(result["avgsa"],4),
+                        "valid_percentage": round(100*len(valid)/len(smiles),4)
                     }
                     write_dict["discrete"]=self.cfg.general.discrete
                     write_dict["thres"]=self.cfg.general.thres
@@ -945,6 +952,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 logf.close()
                 self.validation_time += 1
             print("Done.")
+            
     def validation_epoch_end(self, outs) -> None:
         if self.cfg.general.val_method=="orig":
             metrics = [self.val_nll.compute(), self.val_X_kl.compute() * self.T, self.val_E_kl.compute() * self.T,
@@ -1024,6 +1032,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             return {'loss': nll}
         else:
             return {"loss":0}
+    
     def test_epoch_end(self,outs):
         # method = self.cfg.general.test_method
         method = self.cfg.general.test_method
@@ -1257,12 +1266,13 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         #                       self.current_epoch, self.val_counter, test=True)
         # self.sampling_metrics.reset()
         # print("Done.")
+    
     @torch.no_grad()
     def test_epoch_end_evalproperty(self, outs) -> None:
         """ Measure likelihood on a test set and compute stability metrics. """
         self.model.eval()
         # samples_left_to_generate = self.cfg.general.final_model_samples_to_generate
-        samples_left_to_generate = 2048
+        samples_left_to_generate = 1024
         samples_left_to_save = self.cfg.general.final_model_samples_to_save
         chains_left_to_save = self.cfg.general.final_model_chains_to_save
 
@@ -1324,6 +1334,9 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             print(self.dataset_info)
             smiles,valid_r,uniq,uniq_r,freq_list = gen_smile_list(subsamples,self.dataset_info)
             valid = [x for x in smiles if x is not None]
+            
+            print(f"valid/all percentage: {len(valid)}/{len(smiles)}")
+            
             print(self.cfg.dataset.name,"dataset name is ")
             if self.cfg.dataset.name == "moses":
                 result = mose_evaluate(self.cfg.general.target_prop,valid,None,self.train_fps)
@@ -1344,7 +1357,8 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 "hit":result["hit"],
                 "avgds": round(result["avgds"],4),
                 "avgqed": round(result["avgqed"],4),
-                "avgsa": round(result["avgsa"],4)
+                "avgsa": round(result["avgsa"],4),
+                "valid_percentage": round(100*len(valid)/len(smiles),4)
             }
             smile_path = "sample_smi"
             line = json.dumps(write_dict)+"\n"
@@ -1712,6 +1726,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         noisy_data = {'t_int': t_int, 't': t_float, 'beta_t': beta_t, 'alpha_s_bar': alpha_s_bar,
                       'alpha_t_bar': alpha_t_bar, 'X_t': z_t.X, 'E_t': z_t.E, 'y_t': z_t.y, 'node_mask': node_mask}
         return noisy_data
+    
     @torch.no_grad()
     def compute_val_loss(self, pred, noisy_data, X, E, y, node_mask, test=False,no_prior=False):
         """Computes an estimator for the variational lower bound.
@@ -1761,7 +1776,6 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         return nll
 
     def forward(self, noisy_data, extra_data, node_mask):
-        
         X = torch.cat((noisy_data['X_t'], extra_data.X), dim=2).float()
         E = torch.cat((noisy_data['E_t'], extra_data.E), dim=3).float()
         y = torch.hstack((noisy_data['y_t'], extra_data.y)).float()
@@ -1896,6 +1910,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             molecule_list.append([atom_types, edge_types])
 
         return molecule_list
+    
     @torch.no_grad()
     def sample_batch_seed(self, batch_id: int, batch_size: int, keep_chain: int, number_chain_steps: int,
                      save_final: int, num_nodes=None, seed=None):
@@ -1963,6 +1978,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             molecule_list.append([atom_types, edge_types])
 
         return molecule_list
+    
     @torch.no_grad()
     def sample_batch_ppo(self, batch_size: int):
         """
@@ -1986,8 +2002,8 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         # TODO: how to move node_mask on the right device in the multi-gpu case?
         # TODO: everything else depends on its device
         # Sample noise  -- z has size (n_samples, n_nodes, n_features)
-        z_T = diffusion_utils.sample_discrete_feature_noise(
-            limit_dist=self.limit_dist, node_mask=node_mask)
+        z_T = diffusion_utils.sample_discrete_feature_noise(limit_dist=self.limit_dist, 
+                                                            node_mask=node_mask)
         X, E, y = z_T.X, z_T.E, z_T.y
         assert (E == torch.transpose(E, 1, 2)).all()
         X_traj.append(X.cpu())
@@ -2042,12 +2058,15 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             # print("valid score list",valid_score_list)
             for idx,score in enumerate(valid_score_list):
                 reward_list[valid_idx[idx]]=score
+                
             reward_list = np.array(reward_list)
             validmean = (reward_list[reward_list!=-1]).mean().item()
             reward_list = reward_list.tolist()
+            
             for idx,value in enumerate(freq_list):
                 if value>0 and reward_list[idx]!=-1:
                     reward_list[idx] = reward_list[idx]/value
+        
         elif self.cfg.dataset.name in ["planar","sbm"] and "nodes" not in self.cfg.dataset:
             if self.train_graphs is None:
                 self.train_graphs = loader_to_nx(self.trainer.datamodule.train_dataloader())
