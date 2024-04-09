@@ -127,6 +127,7 @@ def gen_score_disc_list(protein,smiles,thres=0.9,train_fps=None,weight_list=None
             score_list[idx] = valid_score_list[pos]
             pos+=1
     return score_list
+
 def evaluate(protein, smiles, mols=None,train_fps=None):
     df = pd.DataFrame()
     num_mols = len(smiles)

@@ -5,6 +5,7 @@ import rdkit
 import meeko
 import warnings
 import os
+from tqdm import tqdm
 import sys
 warnings.filterwarnings("ignore")
 
@@ -32,7 +33,7 @@ def vinadock(target,smiles_list):
         home_prefix = "./../../../"
     receptor = home_prefix+f'scorer/receptors/{target}.pdbqt'
     score_list = []
-    for smiles in smiles_list:
+    for smiles in tqdm(smiles_list, desc="Processing SMILES for Vina DS"):
         lig = Chem.MolFromSmiles(smiles)
         protonated_lig = Chem.AddHs(lig)
         status=AllChem.EmbedMolecule(protonated_lig)
