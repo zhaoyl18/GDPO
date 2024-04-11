@@ -232,7 +232,6 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                            log=i % self.log_every_steps == 0)
 
         return {'loss': loss}
-
     # def train_step_zppo(self,data,i):
     def write_reward(self,rewardavg,rewardstd):
         logfile = self.home_prefix+"train_log{}_new.log".format(self.cfg.dataset.name)
@@ -280,6 +279,8 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         avgrewards = 0
         all_rewards = []
         gen_start = time.time()
+        
+        print(f"Start sampling, training round: {self.train_round}")
         
         for _ in range(self.cfg.general.sampleloop):
             X_traj,E_traj,node_mask,rewards,rewardsmean = self.sample_batch_ppo(bs)
@@ -375,6 +376,8 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             "WD":self.cfg.train.weight_decay,
             "train_step":self.train_round,
             "gen_cost":round(gen_cost,6),
+            "reward_mean": round(self.r_avg,4),
+            "reward_std": round(self.r_std,4),
             "train_loss":round(total_loss,6),
             "pos_loss": round(pos_loss,6),
             "neg_loss":round(neg_loss,6),
@@ -399,6 +402,16 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             logf.write(line)
             logf.close()
             # logf.close()
+            
+            # Log the training profile to wandb
+            wandb.log({"train/train_loss": total_loss,
+                        "train/reward_mean": self.r_avg,
+                        "train/reward_std": self.r_std,
+                        "train/gen_cost": gen_cost,
+                        "train/time_cost": time_cost,
+                        "train/lr": self.cfg.train.lr},
+                        step=self.train_round)
+            
         self.train_round+=1
     
     def train_step_ddpo(self,data,i):
@@ -433,6 +446,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 X_prev[:,idx,:,:],E_prev[:,idx,:,:,:] = X_prev[perm,idx,:,:],E_prev[perm,idx,:,:,:]
                 time_step[:,idx] = time_step[perm,idx]
             sample_list.append((X_now[:,:bs,:,:],E_now[:,:bs,:,:,:],X_prev[:,:bs,:,:],E_prev[:,:bs,:,:,:],time_step[:,:bs],node_mask[:bs],rewards[:bs]))
+        
         gen_cost = time.time()-gen_start
         all_rewards = np.array(all_rewards)
         self.r_avg = all_rewards[all_rewards!=-1].mean()
@@ -442,7 +456,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         #     self.r_std = 0.8*self.r_std+0.2*(all_rewards.std()+1e-8)
         # print(all_rewards[all_rewards!=-1].mean())
         self.write_reward(self.r_avg,self.r_std)
-        logfile = self.home_prefix+"profile_log3.log"
+        logfile = self.home_prefix+"profile_log_4.log"
         logf = open(logfile,"a+")
         for loop_count in range(self.cfg.general.innerloop):
             opt.zero_grad()
@@ -459,17 +473,20 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 rewards_mask = rewards==-1
                 pos_num += (rewards>0).sum().detach().cpu().numpy().item()
                 neg_num += (rewards<=0).sum().detach().cpu().numpy().item()
+                
                 if self.cfg.general.minibatchnorm:
                     rewardsmean = (rewards[~rewards_mask]).mean()
                     rewardsstd = (rewards[~rewards_mask]).std()+1e-8
                 else:
                     rewardsmean = self.r_avg
                     rewardsstd = self.r_std
+                
                 rewards = (rewards-rewardsmean)/rewardsstd
                 pos_over += (rewards[~rewards_mask]>5).sum().detach().cpu().numpy().item()
                 neg_over += (rewards[~rewards_mask]<-5).sum().detach().cpu().numpy().item()
                 advantages = torch.clamp(rewards, -5, 5).cuda()
                 advantages[rewards_mask]=0
+                
                 #accumulation on T steps
                 sample_idx = random.sample(list(range(self.T)),int(self.T*self.cfg.general.ppo_sr))
                 for idx in sample_idx:
@@ -498,10 +515,12 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                     # print("train loss", loss)
                     self.manual_backward(loss)
                     total_loss+= loss.detach().cpu().numpy().item()
+                
                 if batch_idx%self.cfg.general.step_freq==self.cfg.general.step_freq-1:
                     self.clip_gradients(opt, gradient_clip_val=1.0, gradient_clip_algorithm="norm")
                     opt.step()
                     opt.zero_grad()
+            
             time_cost = time.time()-start_time
             write_dict = {
             "lr":self.cfg.train.lr,
@@ -534,6 +553,16 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             # print(write_dict)
             line = json.dumps(write_dict)+"\n"
             logf.write(line)
+            
+            # Log the training profile to wandb
+            wandb.log({"train/train_loss": total_loss,
+                        "train/reward_mean": self.r_avg,
+                        "train/reward_std": self.r_std,
+                        "train/gen_cost": gen_cost,
+                        "train/time_cost": time_cost,
+                        "train/lr": self.cfg.train.lr},
+                        step=self.train_round)
+            
         self.train_round+=1
 
     def map_pred(self,X_t,E_t,pred,t,s,node_mask):
@@ -819,7 +848,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 if self.cfg.dataset.name == "moses":
                     result = mose_evaluate(self.cfg.general.target_prop,valid,None,self.train_fps)
                 else:
-                    result = prop_evaluate(self.cfg.general.target_prop,valid,None,self.train_fps)
+                    result = prop_evaluate(self.cfg.general.target_prop,valid,None,self.train_fps, weight_list = self.cfg.general.weight_list)
                 if self.cfg.dataset.name == "zinc":
                     logfile = self.home_prefix+"evaluation_dictzinc.log"
                 elif self.cfg.dataset.name == "moses":
@@ -861,6 +890,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                         "interval":self.cfg.general.val_check_interval,
                         "WD":self.cfg.train.weight_decay,
                         "valround":self.validation_time,
+                        "train_step": self.train_round,
                         "VALID":round(100*valid_r,4),
                         "UNIQ":round(100*uniq_r,4),
                         "amsgrad":self.cfg.train.amsgrad,
@@ -881,7 +911,18 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                     }
                     write_dict["discrete"]=self.cfg.general.discrete
                     write_dict["thres"]=self.cfg.general.thres
-                    self.log("val/epoch_score", 100*result["hit"] if valid_r>0.2 else 0)
+                    
+                    self.log("val/epoch_score", result["avgscore"] if valid_r>0.2 else 0)
+                    
+                    wandb.log({"val/epoch_score": result["avgscore"] if valid_r>0.2 else 0,
+                                "val/epoch_qed": result["avgqed"] if valid_r>0.2 else 0,
+                                "val/epoch_sa": result["avgsa"] if valid_r>0.2 else 0,
+                                "val/novelty": result["novelty"] if valid_r>0.2 else 0,
+                                "val/UNIQ": uniq_r,
+                                "val/valid_percentage": valid_r,
+                                "val/validation_round": self.validation_time},
+                                step=self.train_round)
+                    
                     line = json.dumps(write_dict)+"\n"
                     logf.write(line)
                     self.validation_time += 1
@@ -1005,6 +1046,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 print(f'Done. Sampling took {time.time() - start:.2f} seconds\n')
                 self.sampling_metrics.reset()
         elif self.cfg.general.val_method=="ppo":
+            print(f'Start PPO evaluation, validation round: {self.validation_time}')
             self.ppo_evaluate()
         else:
             pass
@@ -1341,7 +1383,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             if self.cfg.dataset.name == "moses":
                 result = mose_evaluate(self.cfg.general.target_prop,valid,None,self.train_fps)
             else:
-                result = prop_evaluate(self.cfg.general.target_prop,valid,None,self.train_fps)
+                result = prop_evaluate(self.cfg.general.target_prop,valid,None,self.train_fps,no_ds=(self.cfg.general.weight_list[3] == 0.0))
             logf = open(logfile,"a+")
             print(result)
             write_dict = {
@@ -1498,7 +1540,6 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         #                       self.current_epoch, self.val_counter, test=True)
         # self.sampling_metrics.reset()
         # print("Done.")
-
 
     def test_epoch_end_ppo(self, outs) -> None:
         """ Measure likelihood on a test set and compute stability metrics. """

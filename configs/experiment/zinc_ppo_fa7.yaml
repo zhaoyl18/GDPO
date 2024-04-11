@@ -19,12 +19,13 @@ general:
     discrete: True
     vallike: False
     partial: True
-    weight_list: [0.1,0.1,0.3,0.5] #qed, sa, novel,ds
+    weight_list: [1.0,0.0,0.0,0.0] #qed, sa, novel,ds
     fix: 0.
     ppo_sr: 0.2
     thres: 0.8
-    val_check_interval: 5
+    val_check_interval: 3
     val_method: "ppo"
+    test_method: "evalproperty"
     train_method: "gdpo"
     target_prop: "fa7"
 train:

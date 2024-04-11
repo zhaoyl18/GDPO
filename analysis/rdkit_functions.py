@@ -220,6 +220,7 @@ class BasicMolecularMetricslist(object):
                 smiles = mol2smiles(mol)
             except:
                 smiles = None
+                
             if smiles is not None:
                 try:
                     mol_frags = Chem.rdmolops.GetMolFrags(

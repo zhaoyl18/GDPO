@@ -30,6 +30,7 @@ def get_novelty_in_df(df,sr=1.,train_fps=None):
             sims = DataStructs.BulkTanimotoSimilarity(gen_fps[i], train_fps)
             max_sims.append(max(sims))
         df['sim'] = max_sims
+
 def gen_score_list(protein,smiles,train_fps=None,weight_list=None):
     df = pd.DataFrame()
     if len(smiles)==0:
@@ -51,15 +52,23 @@ def gen_score_list(protein,smiles,train_fps=None,weight_list=None):
     uniqueness = len(set(df['smiles'])) / len(df)
     get_novelty_in_df(df,0.5,train_fps)
     
-    df[protein] = vinadock(protein,smiles)
-    neg_prop =(df[protein]==-1).tolist()
-    df = df[~df[protein].isin([-1])]
-    dsscore = np.clip(df[protein],0,20)/10
-    novelscore=1-df["sim"]
+    if weight_list is not None and weight_list[2] == 0 and weight_list[3] == 0:
+        # Directly set novelscore and dsscore to 0 without computation
+        novelscore = np.zeros(len(df))  # Assuming df has not been filtered at this point
+        dsscore = np.zeros(len(df))
+        neg_prop = [False] * len(df)
+    else:
+        df[protein] = vinadock(protein,smiles)
+        neg_prop =(df[protein]==-1).tolist()
+        df = df[~df[protein].isin([-1])]
+        dsscore = np.clip(df[protein],0,20)/10
+        novelscore=1-df["sim"]
+        
     df['qed'] = get_scores('qed', df['mol'])
     qedscore = np.array(df["qed"])
     df['sa'] = get_scores('sa', df['mol'])
     sascore = np.array(df["sa"])
+    
     if weight_list is None:
         score_list = 0.1*qedscore+0.1*sascore+0.4*novelscore+0.4*dsscore
     else:
@@ -67,6 +76,7 @@ def gen_score_list(protein,smiles,train_fps=None,weight_list=None):
 
     valid_score_list = score_list.tolist()
     score_list = [-1]*len(neg_prop)
+    
     pos = 0
     for idx,value in enumerate(neg_prop):
         if value:
@@ -96,29 +106,42 @@ def gen_score_disc_list(protein,smiles,thres=0.9,train_fps=None,weight_list=None
     validity = len(df) / (num_mols+1e-8)
     uniqueness = len(set(df['smiles'])) / len(df)
     
-    # novelscore=1-df["sim"]
-    df[protein] = vinadock(protein,smiles)
-    neg_prop =(df[protein]==-1).tolist()
-    df = df[~df[protein].isin([-1])]
-    if protein == 'parp1': hit_thr = 10.
-    elif protein == 'fa7': hit_thr = 8.5
-    elif protein == '5ht1b': hit_thr = 8.7845
-    elif protein == 'jak2': hit_thr = 9.1
-    elif protein == 'braf': hit_thr = 10.3
-    dsscore = (np.array(df[protein])>(thres*hit_thr)).astype("float")*np.array(df[protein])/10
-    get_novelty_in_df(df,0.5,train_fps)
-    novelscore = 1-df["sim"]
-    novelscore = (novelscore>=0.6).astype("float")*novelscore
+    
+    if weight_list is not None and weight_list[2] == 0 and weight_list[3] == 0:
+        # Directly set novelscore and dsscore to 0 without computation
+        novelscore = np.zeros(len(df))  # Assuming df has not been filtered at this point
+        dsscore = np.zeros(len(df))
+        neg_prop = [False] * len(df)
+    else:
+        get_novelty_in_df(df,0.5,train_fps)
+        novelscore = 1-df["sim"]
+        novelscore = (novelscore>=0.6).astype("float")*novelscore
+        
+        df[protein] = vinadock(protein,smiles)
+        neg_prop =(df[protein]==-1).tolist()
+        df = df[~df[protein].isin([-1])]
+        if protein == 'parp1': hit_thr = 10.
+        elif protein == 'fa7': hit_thr = 8.5
+        elif protein == '5ht1b': hit_thr = 8.7845
+        elif protein == 'jak2': hit_thr = 9.1
+        elif protein == 'braf': hit_thr = 10.3
+        dsscore = (np.array(df[protein])>(thres*hit_thr)).astype("float")*np.array(df[protein])/10
+    
     df['qed'] = get_scores('qed', df['mol'])
     qedscore = np.array(df["qed"])
+    
     df['sa'] = get_scores('sa', df['mol'])
     sascore = np.array(df["sa"])
+    
     if weight_list is None:
         score_list = 0.1*qedscore+0.1*sascore+0.3*novelscore+0.5*dsscore
     else:
+        print("Reward weight list is not None:", weight_list)
         score_list = weight_list[0]*qedscore+weight_list[1]*sascore+weight_list[2]*novelscore+weight_list[3]*dsscore
+    
     valid_score_list = score_list.tolist()
     score_list = [-1]*len(neg_prop)
+    
     pos = 0
     for idx,value in enumerate(neg_prop):
         if value:
@@ -128,7 +151,7 @@ def gen_score_disc_list(protein,smiles,thres=0.9,train_fps=None,weight_list=None
             pos+=1
     return score_list
 
-def evaluate(protein, smiles, mols=None,train_fps=None):
+def evaluate(protein, smiles, mols=None,train_fps=None,weight_list=None):
     df = pd.DataFrame()
     num_mols = len(smiles)
     if num_mols==0:
@@ -157,15 +180,29 @@ def evaluate(protein, smiles, mols=None,train_fps=None):
 
     df = df.drop_duplicates(subset=['smiles'])
     before_num = len(df)
-    df[protein] = vinadock(protein,df["smiles"].tolist())
+    
+    if weight_list is not None:
+        no_ds=(weight_list[3] == 0.0)
+    else:
+        no_ds = False
+    
+    if no_ds:
+        df[protein] = 10
+    else:
+        df[protein] = vinadock(protein,df["smiles"].tolist())
+    
     df = df[~df[protein].isin([-1])]
     after_num = len(df)
     num_mols = num_mols-(before_num-after_num)
 
     df['qed'] = get_scores('qed', df['mol'])
-
     df['sa'] = get_scores('sa', df['mol'])
-    avgscore = ((df[protein]/10)*df["qed"]*df["sa"]).mean()
+    
+    if no_ds:
+        avgscore = (weight_list[0]*df["qed"]+ weight_list[1]*df["sa"]).mean()
+    else:
+        avgscore = ((df[protein]/10)*df["qed"]*df["sa"]).mean()
+        
     avgds = (df[protein]/10).mean()
     avgqed = df["qed"].mean()
     avgsa = df["sa"].mean()
@@ -178,6 +215,7 @@ def evaluate(protein, smiles, mols=None,train_fps=None):
     elif protein == 'jak2': hit_thr = 9.1
     elif protein == 'braf': hit_thr = 10.3
     else: raise ValueError('Wrong target protein')
+    
     df = df[df['qed'] > 0.5]
     df = df[df['sa'] > (10 - 5) / 9]
     df = df[df['sim'] < 0.4]

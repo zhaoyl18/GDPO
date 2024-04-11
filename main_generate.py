@@ -6,7 +6,7 @@ except ModuleNotFoundError:
     pass
 
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '3'
+# os.environ['CUDA_VISIBLE_DEVICES'] = '3'
 
 import pathlib
 import warnings
@@ -20,9 +20,9 @@ import sys
 from omegaconf import DictConfig
 import pandas as pd
 from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, EarlyStopping
 from pytorch_lightning.utilities.warnings import PossibleUserWarning
-from pytorch_lightning.loggers import CSVLogger
+from pytorch_lightning.loggers import CSVLogger, WandbLogger
 import utils
 from omegaconf import OmegaConf,open_dict
 # from dataset.spectre_dataset import IMDBDataModule,SpectreDatasetInfos,PROTEINDataModule,MUTAGDataModule
@@ -113,11 +113,15 @@ def get_resume_adaptive(cfg, model_kwargs):
 def setup_wandb(cfg):
     config_dict = omegaconf.OmegaConf.to_container(
         cfg, resolve=True, throw_on_missing=True)
-    kwargs = {'name': cfg.general.name, 'project': f'graph_ddm_{cfg.dataset.name}', 'config': config_dict,
-              'settings': wandb.Settings(_disable_stats=True), 'reinit': True, 'mode': cfg.general.wandb}
-    wandb.init(**kwargs)
+    kwargs = {'name': f'{cfg.general.train_method}_{cfg.general.run_name}_lr={cfg.train.lr}', 
+              'project': f'graph_ddm_{cfg.dataset.name}', 
+              'config': config_dict,
+            #   'settings': wandb.Settings(_disable_stats=True), 
+            #   'reinit': True, 
+              'mode': cfg.general.wandb}
+    wandb_run = wandb.init(**kwargs)
     wandb.save('*.txt')
-    return cfg
+    return cfg, wandb_run
 
 
 @hydra.main(version_base='1.1', config_path='./configs', config_name='config')
@@ -217,8 +221,9 @@ def main(cfg: DictConfig):
         os.chdir(cfg.general.resume.split('checkpoints')[0])
 
     utils.create_folders(cfg)
-    cfg = setup_wandb(cfg)
+    cfg, wandb_run = setup_wandb(cfg)
 
+    wandb_logger = WandbLogger(experiment=wandb_run)
     
     lr_monitor = LearningRateMonitor(logging_interval="step")
     callbacks = []
@@ -228,7 +233,7 @@ def main(cfg: DictConfig):
             if "nodes" in cfg.dataset:
                 topk = 0
             else:
-                topk = 50
+                topk = 5
             checkpoint_callback = ModelCheckpoint(dirpath=f"checkpoints/{cfg.general.name}",
                                                 filename=generate_random_letter(2)+str(cfg.general.seed)+"_"+'{epoch}-{val/epoch_score:.4f}',
                                                 monitor="val/epoch_score",
@@ -249,6 +254,16 @@ def main(cfg: DictConfig):
         callbacks.append(last_ckpt_save)
         callbacks.append(checkpoint_callback)
 
+    # Setup EarlyStopping
+    early_stop_callback = EarlyStopping(
+        monitor='val/epoch_score',  # Metric to monitor
+        min_delta=0.00,             # Minimum change to qualify as an improvement
+        patience=15,                 # Number of epochs with no improvement after which training will be stopped
+        verbose=True,               # Whether to log early stopping messages
+        mode='max'                  # Maximizes "val/epoch_score". Use 'min' for minimization.
+    )
+    callbacks.append(early_stop_callback)
+    
     if cfg.train.ema_decay > 0:
         ema_callback = utils.EMA(decay=cfg.train.ema_decay)
         callbacks.append(ema_callback)
@@ -376,7 +391,7 @@ def main(cfg: DictConfig):
                     new_sd[k[6:]]=v
             model.model.load_state_dict(new_sd)
             model.model.cuda()
-            print("load fine-tuned model")
+            print("Fine-tuned model loaded from: %s"%cfg.general.test_only)
         
         # trainer.test(model, datamodule=datamodule,
         #              ckpt_path=cfg.general.test_only)
@@ -398,7 +413,6 @@ def main(cfg: DictConfig):
                         continue
                     print("Loading checkpoint", ckpt_path)
                     setup_wandb(cfg)
-                    model.ckpt = ckpt_path
                     trainer.test(model, datamodule=datamodule,
                                  ckpt_path=ckpt_path)
 

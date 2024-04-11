@@ -1,6 +1,8 @@
 # General settings
 name: 'graph-digress'      # Warning: 'debug' and 'test' are reserved name that have a special behavior
 
+run_name: 'default'         # Name of the run in WandB
+
 wandb: 'disabled'             # online | offline | disabled
 gpus: 1                     # Multi-gpu is not implemented on this branch
 device: 0

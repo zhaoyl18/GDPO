@@ -2,7 +2,7 @@
 general:
     name : 'zinc'
     gpus : 1
-    wandb: 'disabled'
+    wandb: 'online'
     remove_h: True
     resume: null
     test_only: null
